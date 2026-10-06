@@ -1,0 +1,12 @@
+# large / generated artifacts (never commit)
+*.mp4
+*.avi
+*.mov
+*.db
+*.pt
+snapshots/
+snapshots_test/
+shop_snapshots/
+__pycache__/
+.venv/
+.Ultralytics/
