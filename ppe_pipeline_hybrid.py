@@ -50,14 +50,15 @@ PHONE_CONF = 0.06
 PHONE_IMGSZ = 1280
 PHONE_EVERY = 5          # run the (slow) phone pass every Nth frame
 PHONE_LATCH_S = 30.0     # keep PHONE IN USE alive this long after a sighting
-BLUE_THRESH_ON = 0.06    # blue fraction to declare gloves worn
-BLUE_THRESH_OFF = 0.02   # blue fraction to declare gloves not worn (hysteresis)
-CAP_BRIGHT_THRESH = 0.55 # fraction of head pixels with V>150 => cap on
-                         # (conservative: v3 white cap ~0.6, v2 hair ~0.3)
+BLUE_THRESH_ON = 0.045   # blue fraction to declare gloves worn
+BLUE_THRESH_OFF = 0.02    # blue fraction to declare gloves not worn (hysteresis)
+CAP_BRIGHT_THRESH = 0.55  # fraction of head pixels with V>150 => cap on
+                          # (conservative: v3 white cap ~0.6, v2 hair ~0.3)
 POSE_EVERY = 3
-DEBOUNCE_ON_S = 1.0      # fast attack: alarm turns on quickly
-DEBOUNCE_OFF_S = 5.0     # slow release: needs sustained clear to turn off
-PHONE_SKIP_BLUE = 0.03   # skip phone detection if blue above this (gloves on)
+DEBOUNCE_ON_S = 1.0       # fast attack: alarm turns on quickly
+DEBOUNCE_OFF_S = 5.0      # slow release: needs sustained clear to turn off
+PHONE_SKIP_BLUE = 0.03    # skip phone detection if blue above this (gloves on)
+PHONE_MAX_AREA = 3000     # max phone box area in px (rejects large FPs)
 
 
 def parse_args():
@@ -295,6 +296,10 @@ def main():
                                            (qb[:, :, 1] > 80)).mean())
                             if qblue > 0.15:
                                 continue
+                        # reject oversized boxes (real in-hand phones are small;
+                        # large boxes are counter objects / misdetections)
+                        if (px2 - px1) * (py2 - py1) > PHONE_MAX_AREA:
+                            continue
                         phone_latch = PHONE_LATCH_S
                         phone_box = (px1, py1, px2, py2)
                         phone_box_fi = fi
