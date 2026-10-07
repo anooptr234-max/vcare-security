@@ -49,11 +49,12 @@ PERSON_CONF = 0.30
 PHONE_CONF = 0.06
 PHONE_IMGSZ = 1280
 PHONE_EVERY = 5          # run the (slow) phone pass every Nth frame
-PHONE_LATCH_S = 35.0     # keep PHONE IN USE alive this long after a sighting
+PHONE_LATCH_S = 30.0     # keep PHONE IN USE alive this long after a sighting
 BLUE_THRESH = 0.04       # blue fraction inside person box => gloves worn
 CAP_BRIGHT_THRESH = 0.45 # fraction of head pixels with V>150 => cap on
 POSE_EVERY = 3
-DEBOUNCE_S = 1.0         # alarm flip smoothing
+DEBOUNCE_ON_S = 1.0      # fast attack: alarm turns on quickly
+DEBOUNCE_OFF_S = 5.0     # slow release: needs sustained clear to turn off
 
 
 def parse_args():
@@ -260,7 +261,7 @@ def main():
                     if 0 <= wx < cw and 0 <= wy < ch:
                         wrists_xy.append((wx, wy))
 
-        # ---- phone (slow pass, latched) ----
+        # ---- phone (slow pass, strict centre-in-person, latched) ----
         if emp is not None and fi % PHONE_EVERY == 0:
             ex1, ey1, ex2, ey2 = emp
             rph = person_model.predict(frame, conf=PHONE_CONF,
@@ -272,14 +273,15 @@ def main():
                     if int(c) != 67:  # COCO cell phone
                         continue
                     px1, py1, px2, py2 = (float(v) for v in b)
-                    ia = max(0, min(px2, ex2) - max(px1, ex1)) * \
-                         max(0, min(py2, ey2) - max(py1, ey1))
-                    pa = max(1.0, (px2 - px1) * (py2 - py1))
-                    if ia / pa > 0.4:  # phone on the employee, not the counter
-                        phone_latch = PHONE_LATCH_S
-                        phone_box = (px1, py1, px2, py2)
-                        phone_box_fi = fi
-                        break
+                    # phone centre must be inside the person box (strict:
+                    # rejects phones on counters and far false positives)
+                    pcx, pcy = (px1 + px2) / 2, (py1 + py2) / 2
+                    if not (ex1 <= pcx <= ex2 and ey1 <= pcy <= ey2):
+                        continue
+                    phone_latch = PHONE_LATCH_S
+                    phone_box = (px1, py1, px2, py2)
+                    phone_box_fi = fi
+                    break
         phone_latch = max(0.0, phone_latch - dt)
 
         if emp is not None:
@@ -341,13 +343,15 @@ def main():
             apron_box, glove_boxes = None, []
             phone_latch = 0.0
 
-        # ---- debounce alarm flips ----
+        # ---- asymmetric debounce: fast attack, slow release ----
         for a in alarms:
             if cond[a] == active[a]:
                 hold[a] = 0.0
             else:
                 hold[a] += dt
-                if hold[a] >= DEBOUNCE_S:
+                # turning ON needs 1s; turning OFF needs 5s (avoids flicker)
+                need = DEBOUNCE_ON_S if cond[a] else DEBOUNCE_OFF_S
+                if hold[a] >= need:
                     active[a] = cond[a]
                     hold[a] = 0.0
                     events.append((f"{t:.1f}",
