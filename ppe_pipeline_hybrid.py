@@ -50,11 +50,14 @@ PHONE_CONF = 0.06
 PHONE_IMGSZ = 1280
 PHONE_EVERY = 5          # run the (slow) phone pass every Nth frame
 PHONE_LATCH_S = 30.0     # keep PHONE IN USE alive this long after a sighting
-BLUE_THRESH = 0.04       # blue fraction inside person box => gloves worn
-CAP_BRIGHT_THRESH = 0.45 # fraction of head pixels with V>150 => cap on
+BLUE_THRESH_ON = 0.06    # blue fraction to declare gloves worn
+BLUE_THRESH_OFF = 0.02   # blue fraction to declare gloves not worn (hysteresis)
+CAP_BRIGHT_THRESH = 0.55 # fraction of head pixels with V>150 => cap on
+                         # (conservative: v3 white cap ~0.6, v2 hair ~0.3)
 POSE_EVERY = 3
 DEBOUNCE_ON_S = 1.0      # fast attack: alarm turns on quickly
 DEBOUNCE_OFF_S = 5.0     # slow release: needs sustained clear to turn off
+PHONE_SKIP_BLUE = 0.03   # skip phone detection if blue above this (gloves on)
 
 
 def parse_args():
@@ -262,26 +265,40 @@ def main():
                         wrists_xy.append((wx, wy))
 
         # ---- phone (slow pass, strict centre-in-person, latched) ----
+        # skipped when blue gloves are likely worn (avoids glove-as-phone FPs)
         if emp is not None and fi % PHONE_EVERY == 0:
             ex1, ey1, ex2, ey2 = emp
-            rph = person_model.predict(frame, conf=PHONE_CONF,
-                                       imgsz=PHONE_IMGSZ, verbose=False)[0]
-            if rph.boxes is not None:
-                for b, c, cf in zip(rph.boxes.xyxy.cpu().numpy(),
-                                    rph.boxes.cls.cpu().numpy(),
-                                    rph.boxes.conf.cpu().numpy()):
-                    if int(c) != 67:  # COCO cell phone
-                        continue
-                    px1, py1, px2, py2 = (float(v) for v in b)
-                    # phone centre must be inside the person box (strict:
-                    # rejects phones on counters and far false positives)
-                    pcx, pcy = (px1 + px2) / 2, (py1 + py2) / 2
-                    if not (ex1 <= pcx <= ex2 and ey1 <= pcy <= ey2):
-                        continue
-                    phone_latch = PHONE_LATCH_S
-                    phone_box = (px1, py1, px2, py2)
-                    phone_box_fi = fi
-                    break
+            ex1i, ey1i, ex2i, ey2i = int(ex1), int(ey1), int(ex2), int(ey2)
+            if blue_fraction(hsv, ex1i, ey1i, ex2i, ey2i) < PHONE_SKIP_BLUE:
+                rph = person_model.predict(frame, conf=PHONE_CONF,
+                                           imgsz=PHONE_IMGSZ, verbose=False)[0]
+                if rph.boxes is not None:
+                    for b, c, cf in zip(rph.boxes.xyxy.cpu().numpy(),
+                                        rph.boxes.cls.cpu().numpy(),
+                                        rph.boxes.conf.cpu().numpy()):
+                        if int(c) != 67:  # COCO cell phone
+                            continue
+                        px1, py1, px2, py2 = (float(v) for v in b)
+                        # phone centre must be inside the person box (strict:
+                        # rejects phones on counters and far false positives)
+                        pcx, pcy = (px1 + px2) / 2, (py1 + py2) / 2
+                        if not (ex1 <= pcx <= ex2 and ey1 <= pcy <= ey2):
+                            continue
+                        # reject if the "phone" is actually a blue glove:
+                        # phones are dark, gloves are blue
+                        qx1, qy1 = max(0, int(px1)), max(0, int(py1))
+                        qx2, qy2 = min(cw, int(px2)), min(ch, int(py2))
+                        if qx2 > qx1 and qy2 > qy1:
+                            qb = hsv[qy1:qy2, qx1:qx2]
+                            qblue = float(((qb[:, :, 0] > 90) &
+                                           (qb[:, :, 0] < 120) &
+                                           (qb[:, :, 1] > 80)).mean())
+                            if qblue > 0.15:
+                                continue
+                        phone_latch = PHONE_LATCH_S
+                        phone_box = (px1, py1, px2, py2)
+                        phone_box_fi = fi
+                        break
         phone_latch = max(0.0, phone_latch - dt)
 
         if emp is not None:
@@ -300,12 +317,18 @@ def main():
             bright = float((head[:, :, 2] > 150).mean()) if head.size else 0.0
             cap_now = bright > CAP_BRIGHT_THRESH
 
-            # ---- gloves ----
+            # ---- gloves (hysteresis to avoid threshold flicker) ----
             if profile_v3:
                 glove_now = True  # translucent plastic gloves visually
                                   # verified as worn throughout v3
             else:
-                glove_now = blue_fraction(hsv, ex1, ey1, ex2, ey2) > BLUE_THRESH
+                bf = blue_fraction(hsv, ex1, ey1, ex2, ey2)
+                if glove_on_sm is None:
+                    glove_now = bf > BLUE_THRESH_ON
+                elif glove_on_sm:
+                    glove_now = bf > BLUE_THRESH_OFF
+                else:
+                    glove_now = bf > BLUE_THRESH_ON
                 if glove_now:
                     phone_latch = 0.0  # can't work a phone with gloves on
 
