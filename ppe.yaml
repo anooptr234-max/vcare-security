@@ -1,0 +1,9 @@
+path: /home/hatch/workspace/vcare-security/ppe_dataset
+train: images/train
+val: images/val
+names:
+  0: person
+  1: hair_cap
+  2: glove
+  3: phone
+  4: apron
