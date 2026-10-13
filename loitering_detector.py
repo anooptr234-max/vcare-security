@@ -125,9 +125,9 @@ class DwellTracker:
 class YoloBackend:
     """Pretrained YOLOv8n person detector + ByteTrack."""
 
-    def __init__(self, conf=0.4, imgsz=640):
+    def __init__(self, conf=0.4, imgsz=640, weights="yolov8n.pt"):
         from ultralytics import YOLO
-        self.model = YOLO("yolov8n.pt")  # auto-downloads COCO-pretrained weights
+        self.model = YOLO(weights)  # auto-downloads COCO-pretrained weights
         self.conf = conf
         self.imgsz = imgsz
 
